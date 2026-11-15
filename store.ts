@@ -119,6 +119,14 @@ export interface FetchSelection {
 export interface CachedFetch {
   pack: Buffer;
   selection: FetchSelection;
+  /**
+   * Lazily built framed fetch responses (pkt-line framing + sideband, pure
+   * functions of pack + selection). Cached on the entry so the 50 identical
+   * concurrent shallow-clone fetches do not re-frame the same pack 50 times.
+   * The entry is evicted with the pack cache on any ref/object change.
+   */
+  v2?: Buffer;
+  v0?: Buffer;
 }
 
 export class Store {
