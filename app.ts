@@ -50,14 +50,6 @@ function sendBytes(res: ServerResponse, status: number, body: Buffer, contentTyp
   res.end(body);
 }
 
-function pathOf(req: IncomingMessage): string {
-  try {
-    return new URL(req.url ?? '/', 'http://entry').pathname;
-  } catch {
-    return '/';
-  }
-}
-
 function readBody(req: IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -91,7 +83,8 @@ export function createApp(): Server {
       const requestId = nextRequestId(ctx);
       const baseHeaders = { 'x-github-request-id': requestId };
       const method = req.method ?? 'GET';
-      const path = pathOf(req);
+      // Parse the request URL once and reuse it: the old code parsed it twice
+      // (once for the path, once for the query) on every request.
       let url: URL;
       try {
         url = new URL(req.url ?? '/', 'http://entry');
@@ -99,6 +92,7 @@ export function createApp(): Server {
         sendJson(res, 400, { message: 'Bad Request' }, baseHeaders);
         return;
       }
+      const path = url.pathname;
 
       try {
         // The env's boot check calls this twice: 200 {"ok":true}.
@@ -304,12 +298,12 @@ function handleUploadPack(
       else if (text.startsWith('deepen-not ')) deepenNot.push(text.slice(11).trim());
     }
     const cacheKey = `${[...wants].sort().join(',')}|${[...haves].sort().join(',')}|${depth ?? ''}|${[...shallow].sort().join(',')}`;
-    const { pack, selection } = cachedFetchPack(repo, cacheKey, () => {
+    const cached = cachedFetchPack(repo, cacheKey, () => {
       const sel = selectFetchObjects(repo, wants, haves, depth, shallow, deepenSince, deepenNot);
       return { pack: writePack(sel.objects.map((obj) => ({ type: obj.type, data: obj.data }))), selection: sel };
     });
-    if (isV2) return { status: 200, body: fetchV2Response(selection, pack) };
-    return { status: 200, body: fetchV0Response(selection, pack) };
+    if (isV2) return { status: 200, body: cached.v2 ??= fetchV2Response(cached.selection, cached.pack) };
+    return { status: 200, body: cached.v0 ??= fetchV0Response(cached.selection, cached.pack) };
   }
   // A v0 fetch body has no `command=` line: two flush-terminated sections.
   // Re-parse the raw packets into sections.
@@ -347,11 +341,11 @@ function handleUploadPack(
     return { status: 400, body: Buffer.alloc(0), message: 'No want in fetch request' };
   }
   const cacheKey = `v0|${[...wants].sort().join(',')}|${[...haves].sort().join(',')}|${depth ?? ''}|${[...shallow].sort().join(',')}`;
-  const { pack, selection } = cachedFetchPack(repo, cacheKey, () => {
+  const cached = cachedFetchPack(repo, cacheKey, () => {
     const sel = selectFetchObjects(repo, wants, haves, depth, shallow, deepenSince, deepenNot);
     return { pack: writePack(sel.objects.map((obj) => ({ type: obj.type, data: obj.data }))), selection: sel };
   });
-  return { status: 200, body: fetchV0Response(selection, pack) };
+  return { status: 200, body: cached.v0 ??= fetchV0Response(cached.selection, cached.pack) };
 }
 
 // -------------------------------------------------------------------------------------------------
