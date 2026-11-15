@@ -603,8 +603,13 @@ function headOid(repo: Repo): string {
   return repo.refs.get('refs/heads/main') ?? repo.refs.get(`refs/heads/${repo.defaultBranch}`) ?? ZERO_OID;
 }
 
-/** Upload-pack v2 advertisement: service line, flush, `version 2`, capability lines, flush. */
-export function uploadPackV2Advertisement(): Buffer {
+/**
+ * Upload-pack v2 advertisement: service line, flush, `version 2`, capability lines, flush.
+ * The advertisement is constant (no repo input), so it is built once at module load
+ * instead of per info/refs request — the 50-concurrent-clone workload asks for it 50 times.
+ * Callers only ever write the buffer to a socket, never mutate it.
+ */
+const V2_ADVERTISEMENT: Buffer = (() => {
   const lines = [
     '# service=git-upload-pack\n',
     'version 2\n',
@@ -617,6 +622,10 @@ export function uploadPackV2Advertisement(): Buffer {
   for (const line of lines.slice(1)) parts.push(pktLine(line));
   parts.push(pktFlush());
   return Buffer.concat(parts);
+})();
+
+export function uploadPackV2Advertisement(): Buffer {
+  return V2_ADVERTISEMENT;
 }
 
 /** Upload-pack v0 advertisement (when the client did not ask for version 2). */
